@@ -1,6 +1,7 @@
 from tornado.web import RequestHandler, Application
 from tornado.websocket import WebSocketHandler
 from tornado.ioloop import IOLoop
+from tornado.options import options
 
 
 """
@@ -47,18 +48,24 @@ class EchoWebSocket(WebSocketHandler):
 
 def main():
 	import os
+	
+	options.parse_command_line()
+	
 	settings = dict(
 		debug=True,
 		template_path=os.path.join(os.path.dirname(__file__), 'templates'),
 		static_path=os.path.join(os.path.dirname(__file__), 'static'),
 	)
+	
 	app = Application([
 		(r'/', BaseHandler),
 		(r'/log', TestHandler),
 		(r'/chat', ChatHandler),
 		(r'/ws', EchoWebSocket),
 	], **settings)
+	
 	app.listen(8000)
+	
 	try:
 		IOLoop.instance().start()
 	except:
