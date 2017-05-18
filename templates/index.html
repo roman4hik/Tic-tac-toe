@@ -14,18 +14,20 @@
 					chat.append(evt.data);
 				};
 				$('input[name="send_button"]').on('click', function() {
-					ws.send($('#msg').val());
+					var text = $('#msg').val();
+					if (text.length > 0)
+						ws.send(text);
 					$('#msg').val('');
+					$('#msg').focus();
 				});
 			});
 		</script>
 	</head>
 	<body>
 		<h1>Hello, World!</h1>
-		<p>{{ msg }}</p>
 		<textarea id="text_area" cols="50" rows="10"></textarea>
 		<br>
 		<input type="text" name="msg" id="msg"></input>
-		<input type="button" name="send_button" value="Отправить" onclick=""></input>
+		<input type="button" name="send_button" value="Отправить"></input>
 	</body>
 </html>
