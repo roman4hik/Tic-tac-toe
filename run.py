@@ -45,11 +45,15 @@ class EchoWebSocket(WebSocketHandler):
         import json
         json_obj = json.loads(message)
 
-        self.write_message(json.dumps({'response':'FUCK!'}))
         if 'nickname' in json_obj:
-            user = User.create(username=json_obj['nickname'])
+            nickname = json_obj['nickname']
+            if not User.select().where(User.username == nickname).exists():
+                user = User.create(username=nickname)
+            else:
+                self.write_message(json.dumps({'response': 'FUCK!'}))
+                return
 
-            self.user_list.append(json_obj['nickname'])
+            self.user_list.append(nickname)
 
             dump = json.dumps(dict(
                 user_id=user.id,
