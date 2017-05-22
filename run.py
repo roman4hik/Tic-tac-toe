@@ -10,6 +10,9 @@ from tornado.ioloop import IOLoop
 from tornado.options import options
 from peewee import *
 from playhouse.sqlite_ext import SqliteExtDatabase
+from tornado.escape import json_decode, json_encode
+from tornado.gen import coroutine
+from uuid import uuid4
 
 
 DATABASE = 'server.db'
@@ -20,47 +23,65 @@ db = SqliteExtDatabase(DATABASE)
 
 class MainPage(RequestHandler):
     def get(self):
-        self.render('index.html', title='Тест')
+        self.render('index.html')
 
 
 class User(Model):
     id = PrimaryKeyField()
     username = CharField(unique=True)
+    hash = CharField()
 
     class Meta:
         database = db
 
 
 class EchoWebSocket(WebSocketHandler):
-    user_list= list()
+    user_list= dict()
     connections = set()
 
+    @coroutine
     def open(self):
         self.connections.add(self)
 
+    @coroutine
     def on_close(self):
         self.connections.remove(self)
 
+    def send_user_list(self):
+        for con in self.connections:
+            con.write_message(json_encode({
+                'status': 'success',
+                'users': {k: v[0] for k, v in self.user_list.items()}
+            }))
+
+    @coroutine
     def on_message(self, message):
-        import json
-        json_obj = json.loads(message)
+        json_obj = json_decode(message)
+        cmd = json_obj['cmd']
 
-        if 'nickname' in json_obj:
-            nickname = json_obj['nickname']
-            if not User.select().where(User.username == nickname).exists():
-                user = User.create(username=nickname)
-            else:
-                self.write_message(json.dumps({'response': 'FUCK!'}))
-                return
+        if cmd in globals():
+            func = globals()[cmd]
+            func(self, json_obj)
 
-            self.user_list.append(nickname)
 
-            dump = json.dumps(dict(
-                user_id=user.id,
-                users=self.user_list,
-            ))
+def login(cls, json_obj):
+    if 'nickname' in json_obj:
+        nickname = json_obj['nickname']
+        if not nickname in cls.user_list.keys():
+            cls.user_list[nickname] = hash(cls), cls
+            cls.send_user_list()
+        else:
+            cls.write_message(json_encode({'status': 'Login fail!'}))
 
-            self.write_message(dump)
+
+def disconnect(cls, json_obj):
+    nickname = json_obj['nickname']
+    if nickname in cls.user_list.keys():
+        cls.connections.remove(cls.user_list[nickname][1])
+        del cls.user_list[nickname]
+        cls.send_user_list()
+    else:
+        cls.write_message(json_encode({'status': 'Disconnect fail!'}))
 
 
 def main():
@@ -68,8 +89,8 @@ def main():
 
     db.connect()
 
-    if not os.path.exists('server.db'):
-        db.create_tables([User])
+    if not User.table_exists():
+        User.create_table()
 
     options.parse_command_line()
 
