@@ -11,7 +11,7 @@ from tornado.options import options
 from peewee import *
 from playhouse.sqlite_ext import SqliteExtDatabase
 from tornado.escape import json_decode, json_encode
-from tornado.gen import coroutine
+from tornado.gen import coroutine, sleep
 from uuid import uuid4
 
 
@@ -35,9 +35,31 @@ class User(Model):
         database = db
 
 
+class Session:
+    def __init__(self, user_1, user_2):
+        self.user_1, self.user_2 = user_1, user_2
+        self.map = list(range(9))
+        self.steep = 0
+
+    def foo(self, cell, symbol):
+        if self.steep > 4:
+            return self.check_win()
+        self.steep += 1
+        self.map[cell] = symbol
+
+    def check_win(self):
+        win_coord = ((0, 1, 2), (3, 4, 5), (6, 7, 8), (0, 3, 6), (1, 4, 7), (2, 5, 8), (0, 4, 8), (2, 4, 6))
+        for each in win_coord:
+            if self.map[each[0]] == self.map[each[1]] == self.map[each[2]]:
+                return self.map[each[0]], each
+        return False
+
+
 class EchoWebSocket(WebSocketHandler):
     user_list= dict()
     connections = set()
+    sessions = dict()
+    invites = dict()
 
     @coroutine
     def open(self):
@@ -47,13 +69,6 @@ class EchoWebSocket(WebSocketHandler):
     def on_close(self):
         self.connections.remove(self)
 
-    def send_user_list(self):
-        for con in self.connections:
-            con.write_message(json_encode({
-                'status': 'success',
-                'users': {k: v[0] for k, v in self.user_list.items()}
-            }))
-
     @coroutine
     def on_message(self, message):
         json_obj = json_decode(message)
@@ -61,27 +76,56 @@ class EchoWebSocket(WebSocketHandler):
 
         if cmd in globals():
             func = globals()[cmd]
-            func(self, json_obj)
+            yield func(self, json_obj)
 
-
+@coroutine
 def login(cls, json_obj):
     if 'nickname' in json_obj:
         nickname = json_obj['nickname']
         if not nickname in cls.user_list.keys():
             cls.user_list[nickname] = hash(cls), cls
-            cls.send_user_list()
+            cls.write_message(json_encode({'status': 'success'}))
         else:
-            cls.write_message(json_encode({'status': 'Login fail!'}))
+            cls.write_message(json_encode({'status': 'fail'}))
 
-
+@coroutine
 def disconnect(cls, json_obj):
     nickname = json_obj['nickname']
     if nickname in cls.user_list.keys():
         cls.connections.remove(cls.user_list[nickname][1])
         del cls.user_list[nickname]
-        cls.send_user_list()
-    else:
-        cls.write_message(json_encode({'status': 'Disconnect fail!'}))
+
+@coroutine
+def getUserList(cls, json_obj):
+    nickname = json_obj['nickname']
+    cls.write_message(json_encode({
+        'users': list(i for i in cls.user_list.keys() if i != nickname)
+    }))
+    for con in cls.connections:
+        if con != cls:
+            con.write_message(json_encode({
+                'users': list(cls.user_list.keys())
+            }))
+
+@coroutine
+def invite(cls, json_obj):
+    cls.invites['id'] = json_obj['id'] = str(uuid4())
+    from_user = json_obj['addEnemy']
+    invited_user_con = cls.user_list[from_user][1]
+    invited_user_con.write_message(json_obj)
+
+@coroutine
+def invite_accept(cls, json_obj):
+    invite_id = json_obj['id']
+
+@coroutine
+def invite_cancel(cls, json_obj):
+    pass
+
+@coroutine
+def session(cls, json_obj):
+    session_id = uuid4()
+    cls.sessions[session_id] = Session(None, None)
 
 
 def main():
