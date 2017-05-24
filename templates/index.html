@@ -1,33 +1,68 @@
 <!DOCTYPE html>
 <html>
 	<head>
-		<title>{{ title }}</title>
+		<title>Main page</title>
 		<script type="text/javascript" src="{{ static_url("jquery-3.2.1.min.js") }}"></script>
 		<script type="text/javascript">
-			$(function() {
-				var ws = new WebSocket('ws://localhost:8000/ws');
-				ws.onopen = function() {
-					ws.send("Hello, world");
-				};
-				ws.onmessage = function(evt) {
-					var chat = $('#text_area');
-					chat.append(evt.data);
-				};
-				$('input[name="send_button"]').on('click', function() {
-					var text = $('#msg').val();
-					if (text.length > 0)
-						ws.send(text);
-					$('#msg').val('');
-					$('#msg').focus();
-				});
-			});
+            var ws = null;
+            $(document).ready(function() {
+                $('#connect').click(function(e) {
+                    e.preventDefault();
+                    var id = $('input[name="nickname"]').val();
+                    if (id === '') {
+                        alert('Enter your nickname!');
+                        return;
+                    }
+
+                    if (ws === null)
+                        ws = new WebSocket('ws://' + window.location.host + '/ws');
+                    else {
+                        ws.close();
+                        ws = new WebSocket('ws://' + window.location.host + '/ws');
+                    }
+
+                    ws.onopen = function() {
+                        var obj = {
+                            'cmd' : 'login',
+                            'nickname' : id
+                        };
+                        ws.send(JSON.stringify(obj));
+                    };
+
+                    ws.onmessage = function(evt) {
+                        var j_obj = JSON.parse(evt.data);
+
+                        if ('cmd' in j_obj && j_obj['cmd'] === 'invite') {
+                            var res = confirm('You will be invited: "' + j_obj['from'] + '"');
+                            if (res === true) {
+                                j_obj['cmd'] = 'invite_accept';
+                                console.log('send json:');
+                                console.log(j_obj);
+                                ws.send(JSON.stringify(j_obj));
+                            }
+                        }
+                        $('#text_area').append(evt.data + '\n');
+                    };
+                });
+                $('#dis').click(function(e) {
+                    e.preventDefault();
+                    var id = $('input[name="nickname"]').val();
+                    var obj = {
+                        'cmd' : 'disconnect',
+                        'nickname' : id
+                    };
+                    ws.send(JSON.stringify(obj));
+                    $('#text_area').val('');
+                });
+            });
 		</script>
 	</head>
 	<body>
-		<h1>Hello, World!</h1>
+        <h2>Nickname: <input type="text" name="nickname"></h2>
+        <p>
+            <button id="connect">Connect</button>
+            <button id="dis">Disconnect</button>
+        </p>
 		<textarea id="text_area" cols="50" rows="10"></textarea>
-		<br>
-		<input type="text" name="msg" id="msg"></input>
-		<input type="button" name="send_button" value="Отправить"></input>
 	</body>
 </html>
