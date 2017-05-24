@@ -11,8 +11,12 @@ from tornado.options import options
 from peewee import *
 from playhouse.sqlite_ext import SqliteExtDatabase
 from tornado.escape import json_decode, json_encode
-from tornado.gen import coroutine, sleep
+from tornado.gen import coroutine
 from uuid import uuid4
+import logging
+
+
+logging.basicConfig(format='%(levelname)s [%(asctime)s %(filename)s line %(lineno)d] %(message)s')
 
 
 DATABASE = 'server.db'
@@ -36,16 +40,14 @@ class User(Model):
 
 
 class Session:
-    def __init__(self, user_1, user_2):
-        self.user_1, self.user_2 = user_1, user_2
+    def __init__(self, **kwargs):
+        self.users = kwargs
         self.map = list(range(9))
-        self.steep = 0
+        self.step = 0
 
-    def foo(self, cell, symbol):
-        if self.steep > 4:
-            return self.check_win()
-        self.steep += 1
-        self.map[cell] = symbol
+    def set_cell(self, cell, symbol):
+        self.map[int(cell)] = symbol
+        self.step += 1
 
     def check_win(self):
         win_coord = ((0, 1, 2), (3, 4, 5), (6, 7, 8), (0, 3, 6), (1, 4, 7), (2, 5, 8), (0, 4, 8), (2, 4, 6))
@@ -75,9 +77,7 @@ class EchoWebSocket(WebSocketHandler):
 
         if cmd in globals():
             func = globals()[cmd]
-            print('=' * 60)
-            print('Call function:', func.__name__)
-            print('=' * 60)
+            logging.warning('Call function %s', func.__name__)
             yield func(self, json_obj)
 
 @coroutine
@@ -85,11 +85,7 @@ def login(cls, json_obj):
     if 'nickname' in json_obj:
         nickname = json_obj['nickname']
         if not nickname in cls.user_list.keys():
-
-            print('=' * 60)
-            print('Login:', json_obj)
-            print('=' * 60)
-
+            logging.warning('Login: %s', json_obj)
             cls.user_list[nickname] = hash(cls), cls
             cls.write_message(json_encode({'status': 'success'}))
         else:
@@ -99,18 +95,22 @@ def login(cls, json_obj):
 def disconnect(cls, json_obj):
     nickname = json_obj['nickname']
     if nickname in cls.user_list.keys():
+        logging.warning('Disconnect: %s', nickname)
         cls.connections.remove(cls.user_list[nickname][1])
         del cls.user_list[nickname]
 
 @coroutine
 def getUserList(cls, json_obj):
     nickname = json_obj['nickname']
+    logging.warning('Get user list: %s Json: %s', nickname, json_obj)
     cls.write_message(json_encode({
         'users': list(i for i in cls.user_list.keys() if i != nickname)
     }))
 
 @coroutine
 def invite(cls, json_obj):
+    logging.warning('Invite: %s', json_obj)
+
     # generate unique session id
     game_id = str(uuid4())
     json_obj['gameid'] = game_id
@@ -126,29 +126,35 @@ def invite(cls, json_obj):
 def invite_accept(cls, json_obj):
     from random import choice
     game_id = json_obj['gameid']
-    print('=' * 60)
-    print('Invite accept:', json_obj)
-    print('=' * 60)
+
+    logging.warning('Invite accept: %s', json_obj)
 
     sender = cls.user_list[json_obj['from']][1]
     enemy = cls.user_list[json_obj['enemy']][1]
 
     c = choice('XO')
+    logging.warning('Choice: %s', c)
 
-    cls.sessions[game_id] = Session(sender, enemy)
+    sender_key = c
+    enemy_key = 'O' if c == 'X' else 'X'
+
+    logging.warning('Sender key: %s, enemy key: %s', sender_key, enemy_key)
+
+    _dict = {sender_key:sender, enemy_key:enemy}
+    cls.sessions[game_id] = Session(**_dict)
 
     sender.write_message(json_encode({
         'game': 'start',
         'gameid': game_id,
         'enemynickname': json_obj['enemy'],
-        'key': c
+        'key': sender_key
     }))
 
     enemy.write_message(json_encode({
         'game': 'start',
         'gameid': game_id,
         'enemynickname': json_obj['from'],
-        'key': 'O' if c == 'X' else c
+        'key': enemy_key
     }))
 
 @coroutine
@@ -156,11 +162,30 @@ def invite_cancel(cls, json_obj):
     game_id = json_obj['gameid']
 
     if game_id in cls.sessions.keys():
+        logging.warning('Invite cancel: %s', json_obj)
         del cls.sessions[game_id]
 
 @coroutine
 def game(cls, json_obj):
-    pass
+    # get key, cell and game id
+    key, cell, game_id = json_obj['key'], json_obj['cell'], json_obj['gameid']
+
+    logging.warning('Game: %s', json_obj)
+
+    # get game session and set cell with key
+    session = cls.sessions[game_id]
+    session.set_cell(cell=cell, symbol=key)
+
+    send_to = 'O' if key == 'X' else key
+    session.users[send_to].write_message(json_encode({'gamestep': cell}))
+
+    # if step > 4
+    if session.step > 4:
+        # check win
+        res = session.check_win()
+        if isinstance(res, tuple):
+            winner, path = res
+            """send win to winner and send lose to loser"""
 
 
 def main():
@@ -174,7 +199,7 @@ def main():
     options.parse_command_line()
 
     settings = dict(
-        debug=True,
+        warning=True,
         template_path=os.path.join(os.path.dirname(__file__), 'templates'),
         static_path=os.path.join(os.path.dirname(__file__), 'static'),
     )
