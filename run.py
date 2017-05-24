@@ -46,7 +46,7 @@ class Session:
         self.step = 0
 
     def set_cell(self, cell, symbol):
-        self.map[int(cell)] = symbol
+        self.map[int(cell) - 1] = symbol
         self.step += 1
 
     def check_win(self):
@@ -58,9 +58,9 @@ class Session:
 
 
 class EchoWebSocket(WebSocketHandler):
-    user_list= dict()
-    connections = set()
     sessions = dict()
+    user_list = dict()
+    connections = set()
 
     @coroutine
     def open(self):
@@ -80,16 +80,18 @@ class EchoWebSocket(WebSocketHandler):
             logging.warning('Call function %s', func.__name__)
             yield func(self, json_obj)
 
+
 @coroutine
 def login(cls, json_obj):
     if 'nickname' in json_obj:
         nickname = json_obj['nickname']
-        if not nickname in cls.user_list.keys():
+        if nickname in cls.user_list.keys():
+            cls.write_message(json_encode({'status': 'fail'}))
+        else:
             logging.warning('Login: %s', json_obj)
             cls.user_list[nickname] = hash(cls), cls
             cls.write_message(json_encode({'status': 'success'}))
-        else:
-            cls.write_message(json_encode({'status': 'fail'}))
+
 
 @coroutine
 def disconnect(cls, json_obj):
@@ -99,6 +101,7 @@ def disconnect(cls, json_obj):
         cls.connections.remove(cls.user_list[nickname][1])
         del cls.user_list[nickname]
 
+
 @coroutine
 def getUserList(cls, json_obj):
     nickname = json_obj['nickname']
@@ -106,6 +109,7 @@ def getUserList(cls, json_obj):
     cls.write_message(json_encode({
         'users': list(i for i in cls.user_list.keys() if i != nickname)
     }))
+
 
 @coroutine
 def invite(cls, json_obj):
@@ -121,6 +125,7 @@ def invite(cls, json_obj):
     # send invite to enemy
     enemy = cls.user_list[json_obj['enemy']][1]
     enemy.write_message(json_obj)
+
 
 @coroutine
 def invite_accept(cls, json_obj):
@@ -140,7 +145,7 @@ def invite_accept(cls, json_obj):
 
     logging.warning('Sender key: %s, enemy key: %s', sender_key, enemy_key)
 
-    _dict = {sender_key:sender, enemy_key:enemy}
+    _dict = {sender_key: sender, enemy_key: enemy}
     cls.sessions[game_id] = Session(**_dict)
 
     sender.write_message(json_encode({
@@ -157,6 +162,7 @@ def invite_accept(cls, json_obj):
         'key': enemy_key
     }))
 
+
 @coroutine
 def invite_cancel(cls, json_obj):
     game_id = json_obj['gameid']
@@ -165,9 +171,9 @@ def invite_cancel(cls, json_obj):
         logging.warning('Invite cancel: %s', json_obj)
         del cls.sessions[game_id]
 
+
 @coroutine
 def game(cls, json_obj):
-    # get key, cell and game id
     key, cell, game_id = json_obj['key'], json_obj['cell'], json_obj['gameid']
 
     logging.warning('Game: %s', json_obj)
@@ -176,16 +182,27 @@ def game(cls, json_obj):
     session = cls.sessions[game_id]
     session.set_cell(cell=cell, symbol=key)
 
-    send_to = 'O' if key == 'X' else key
+    send_to = 'O' if key == 'X' else 'X'
     session.users[send_to].write_message(json_encode({'gamestep': cell}))
+    logging.warning('Send to: %s, cell: %s', send_to, cell)
 
-    # if step > 4
     if session.step > 4:
-        # check win
         res = session.check_win()
-        if isinstance(res, tuple):
-            winner, path = res
+        if isinstance(res, tuple):  # check win
             """send win to winner and send lose to loser"""
+            winner, cells = res
+            cells = [i + 1 for i in cells]
+            loser = 'O' if winner == 'X' else 'X'
+
+            logging.warning('Player %s win! Cells: %s', winner, cells)
+
+            session.users[winner].write_message(json_encode({'gameresult': 'win', 'cells': cells}))
+            session.users[loser].write_message(json_encode({'gameresult': 'loser', 'cells': cells}))
+
+    if session.step == 9:
+        logging.warning('Draw!')
+        for user in session.users.values():
+            user.write_message(json_encode({'gameresult': 'draw', 'cells': []}))
 
 
 def main():
