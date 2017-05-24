@@ -59,7 +59,6 @@ class EchoWebSocket(WebSocketHandler):
     user_list= dict()
     connections = set()
     sessions = dict()
-    invites = dict()
 
     @coroutine
     def open(self):
@@ -76,6 +75,9 @@ class EchoWebSocket(WebSocketHandler):
 
         if cmd in globals():
             func = globals()[cmd]
+            print('=' * 60)
+            print('Call function:', func.__name__)
+            print('=' * 60)
             yield func(self, json_obj)
 
 @coroutine
@@ -83,6 +85,11 @@ def login(cls, json_obj):
     if 'nickname' in json_obj:
         nickname = json_obj['nickname']
         if not nickname in cls.user_list.keys():
+
+            print('=' * 60)
+            print('Login:', json_obj)
+            print('=' * 60)
+
             cls.user_list[nickname] = hash(cls), cls
             cls.write_message(json_encode({'status': 'success'}))
         else:
@@ -101,31 +108,59 @@ def getUserList(cls, json_obj):
     cls.write_message(json_encode({
         'users': list(i for i in cls.user_list.keys() if i != nickname)
     }))
-    for con in cls.connections:
-        if con != cls:
-            con.write_message(json_encode({
-                'users': list(cls.user_list.keys())
-            }))
 
 @coroutine
 def invite(cls, json_obj):
-    cls.invites['id'] = json_obj['id'] = str(uuid4())
-    from_user = json_obj['addEnemy']
-    invited_user_con = cls.user_list[from_user][1]
-    invited_user_con.write_message(json_obj)
+    # generate unique session id
+    game_id = str(uuid4())
+    json_obj['gameid'] = game_id
+
+    # create empty session
+    cls.sessions[game_id] = None
+
+    # send invite to enemy
+    enemy = cls.user_list[json_obj['enemy']][1]
+    enemy.write_message(json_obj)
 
 @coroutine
 def invite_accept(cls, json_obj):
-    invite_id = json_obj['id']
+    from random import choice
+    game_id = json_obj['gameid']
+    print('=' * 60)
+    print('Invite accept:', json_obj)
+    print('=' * 60)
+
+    sender = cls.user_list[json_obj['from']][1]
+    enemy = cls.user_list[json_obj['enemy']][1]
+
+    c = choice('XO')
+
+    cls.sessions[game_id] = Session(sender, enemy)
+
+    sender.write_message(json_encode({
+        'game': 'start',
+        'gameid': game_id,
+        'enemynickname': json_obj['enemy'],
+        'key': c
+    }))
+
+    enemy.write_message(json_encode({
+        'game': 'start',
+        'gameid': game_id,
+        'enemynickname': json_obj['from'],
+        'key': 'O' if c == 'X' else c
+    }))
 
 @coroutine
 def invite_cancel(cls, json_obj):
-    pass
+    game_id = json_obj['gameid']
+
+    if game_id in cls.sessions.keys():
+        del cls.sessions[game_id]
 
 @coroutine
-def session(cls, json_obj):
-    session_id = uuid4()
-    cls.sessions[session_id] = Session(None, None)
+def game(cls, json_obj):
+    pass
 
 
 def main():

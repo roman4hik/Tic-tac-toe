@@ -15,10 +15,10 @@
                     }
 
                     if (ws === null)
-                        ws = new WebSocket('ws://192.168.0.162:8000/ws');
+                        ws = new WebSocket('ws://' + window.location.host + '/ws');
                     else {
                         ws.close();
-                        ws = new WebSocket('ws://192.168.0.162:8000/ws');
+                        ws = new WebSocket('ws://' + window.location.host + '/ws');
                     }
 
                     ws.onopen = function() {
@@ -30,8 +30,18 @@
                     };
 
                     ws.onmessage = function(evt) {
-                        var chat = $('#text_area');
-                        chat.val(evt.data);
+                        var j_obj = JSON.parse(evt.data);
+
+                        if ('cmd' in j_obj && j_obj['cmd'] === 'invite') {
+                            var res = confirm('You will be invited: "' + j_obj['from'] + '"');
+                            if (res === true) {
+                                j_obj['cmd'] = 'invite_accept';
+                                console.log('send json:');
+                                console.log(j_obj);
+                                ws.send(JSON.stringify(j_obj));
+                            }
+                        }
+                        $('#text_area').append(evt.data + '\n');
                     };
                 });
                 $('#dis').click(function(e) {
